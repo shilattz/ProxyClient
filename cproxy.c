@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <ctype.h>
 #define MAX_BUF_SIZE 1024
-
+//the update with the content
 void parse_url(const char *url, char *hostname, int *port, char *filepath) {
     char temp[MAX_BUF_SIZE];
     int default_port = 80;
@@ -53,7 +53,14 @@ void parse_url(const char *url, char *hostname, int *port, char *filepath) {
 
     // Extract filepath
     if (path_separator != NULL) {
-        strcpy(filepath, path_separator);
+        // Check for consecutive slashes at the end of the URL
+        const char *last_slash = strrchr(path_separator, '/');
+        if (last_slash != NULL && *(last_slash + 1) == '\0') {
+            // URL ends with slashes, set filepath to "/"
+            strcpy(filepath, "/");
+        } else {
+            strcpy(filepath, path_separator);
+        }
     } else {
         // No filepath specified, use "/"
         strcpy(filepath, "/");
@@ -73,7 +80,6 @@ char* get_directory_path(const char *hostname, const char *filepath){
     // Find the last occurrence of '/'
     char *last_slash = strrchr(concatenated, '/');
 
-    //if (last_slash != NULL) {
     // Calculate the length of the new string until the last '/'
     size_t new_length = last_slash - concatenated + 1; // +1 to include the last '/'
 
@@ -88,7 +94,7 @@ char* get_directory_path(const char *hostname, const char *filepath){
     directory_path[new_length - 1] = '\0'; // Null-terminate the string
 
     // Print the new string
-    printf("New String: %s\n", directory_path);
+   // printf("New String: %s\n", directory_path);
 
     return directory_path;
 }
@@ -102,7 +108,7 @@ int file_exists_locally(const char *hostname, const char *filepath) {
 }
 
 // Function to construct HTTP request based on URL
-char *construct_request(const char *hostname, const char *filepath) {
+char *construct_request(const char *hostname,  char *filepath ,int path_flag) {
 
     char *request = (char *)malloc(MAX_BUF_SIZE);
     if (request == NULL) {
@@ -110,8 +116,15 @@ char *construct_request(const char *hostname, const char *filepath) {
         exit(1);
     }
 
-    //sprintf(request, "GET %s HTTP/1.0\r\nHost: %s:%d\r\nConnection: close\r\n\r\n", filepath, hostname, port);
-    sprintf(request, "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n", filepath, hostname);
+    if (strcmp(filepath, "/index.html") == 0 && path_flag==1) {
+        strcpy(filepath, "/");
+        sprintf(request, "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n", filepath, hostname);
+        strcpy(filepath, "/index.html");
+    }
+    else{
+        sprintf(request, "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n", filepath, hostname);
+    }
+
     return request;
 }
 
@@ -139,10 +152,8 @@ void create_directories(const char *path) {
 // Function to save file locally
 void save_file_locally(const char *directory, const char *filename, char *response, int size) {
     char filepath[MAX_BUF_SIZE];
-     //sprintf(filepath, "%s/%s", directory, filename);
-   snprintf(filepath, sizeof(filepath), "%s/%s", directory, filename);
-//    printf("%s\n",directory);
-//    printf("%s\n",filename);
+    snprintf(filepath, sizeof(filepath), "%s/%s", directory, filename);
+
     FILE *file = fopen(filepath, "ab");
     if (file == NULL) {
         perror("Error opening file for writing");
@@ -181,12 +192,11 @@ void open_file(const char *hostname, const char *filepath){
     }
     fclose(file);
 
-//    printf("\nTotal response: %ld\n",content_size + strlen("HTTP/1.0 200 OK\r\nContent-Length: \r\n\r\n"));
-    printf("\nTotal response: %ld\n",file_size + strlen("HTTP/1.0 200 OK\r\nContent-Length: \r\n\r\n"));
+    printf("\n Total response bytes: %ld\n",file_size + strlen("HTTP/1.0 200 OK\r\nContent-Length: \r\n\r\n"));
 }
 
 // Function to send HTTP request and receive response
-void send_receive_request(const char *request, const char *hostname, const char *filepath, int port) {
+void send_receive_request( char *request, const char *hostname, const char *filepath, int port) {
 
     char response[MAX_BUF_SIZE];
 
@@ -221,8 +231,6 @@ void send_receive_request(const char *request, const char *hostname, const char 
 
     int bytes_received;
     int flag=0;
-    int not_continue=0;
-
 
 
 
@@ -230,8 +238,8 @@ void send_receive_request(const char *request, const char *hostname, const char 
 
     char local_directory[5000];
 
-    while ((bytes_received = recv(sockfd, response , MAX_BUF_SIZE , 0)) > 0  && not_continue==0) {
-      //  printf("%s\n",response);
+    while ((bytes_received = recv(sockfd, response , MAX_BUF_SIZE , 0)) > 0  ) {
+        //  printf("%s\n",response);
 
         if(flag==0) {
             // Check if the HTTP response is 200 OK
@@ -242,8 +250,11 @@ void send_receive_request(const char *request, const char *hostname, const char 
                     *first_line_end = '\0'; // Null terminate to print only the first line
                     printf("%s\n", response);
                 }
-                not_continue=1;
-                break;
+                //not_continue=1;
+                free(directory_path);
+                close(sockfd);
+                free(request);
+                exit(0);
             }
             //keep the file locally
             snprintf(local_directory, sizeof(local_directory), "./%s", directory_path);
@@ -255,7 +266,7 @@ void send_receive_request(const char *request, const char *hostname, const char 
                                   MAX_BUF_SIZE - (body_start - response) - 4);
                 flag = 1;
             } else{//if there is no body
-                printf("\nThere is no body\n");
+               // printf("\nThere is no body\n");
                 save_file_locally(hostname, filepath, NULL, 0);
                 break;
             }
@@ -271,7 +282,7 @@ void send_receive_request(const char *request, const char *hostname, const char 
         exit(EXIT_FAILURE);
     }
 
-    if(not_continue!=1)
+    //if(not_continue!=1)
     open_file(hostname,filepath);
 
     free(directory_path);
@@ -294,13 +305,15 @@ int main(int argc, char *argv[]) {
     int port;
 
     parse_url(url, hostname, &port, filepath);
+    int path_flag=0;
 
     if (strcmp(filepath, "/") == 0) {
         strcpy(filepath, "/index.html");
+        path_flag=1;
     }
-        printf("%s\n",hostname);
-        printf("%d\n",port);
-        printf("%s\n",filepath);
+//    printf("%s\n",hostname);
+//    printf("%d\n",port);
+//    printf("%s\n",filepath);
     if (file_exists_locally(hostname,filepath)) {
         // File exists locally
         printf("File is given from local filesystem\n");
@@ -308,12 +321,13 @@ int main(int argc, char *argv[]) {
 
     } else {
 
-        char *request = construct_request(hostname, filepath);
+
+        char *request = construct_request(hostname, filepath,path_flag);
         printf("HTTP request =\n%s\nLEN = %d\n", request, (int)strlen(request));
 
-        printf("Sending HTTP request...\n");
+       // printf("Sending HTTP request...\n");
         send_receive_request(request, hostname, filepath, port);
-       // send_receive_request(request, hostname, filepath, port,url);
+        // send_receive_request(request, hostname, filepath, port,url);
         free(request);
     }
 
@@ -322,7 +336,7 @@ int main(int argc, char *argv[]) {
 //        printf("%d\n",port);
 //        printf("%s\n",filepath);
 
-        printf("\nOpening browser to present the page...\n");
+       // printf("\nOpening browser to present the page...\n");
         char path[5000];
         sprintf(path, "xdg-open %s/%s", hostname, filepath);
         // Open browser to present the file
@@ -334,3 +348,4 @@ int main(int argc, char *argv[]) {
 
     return EXIT_SUCCESS;
 }
+
